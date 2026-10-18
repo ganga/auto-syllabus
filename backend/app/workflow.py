@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -53,6 +54,12 @@ def curriculum_mapper(state: CurriculumState) -> dict:
     return {"lessons": lessons, "needs_remap": False}
 
 
+def normalize_lesson_day(value: object, fallback: int) -> int:
+    """Accept LLM day values such as 1, "1", or "Day 1"."""
+    match = re.search(r"\d+", str(value))
+    return int(match.group()) if match else fallback
+
+
 def video_curator(state: CurriculumState) -> dict:
     # A curriculum performs one search, rather than one expensive search per day.
     # The returned library is matched across the lesson sequence.
@@ -60,7 +67,12 @@ def video_curator(state: CurriculumState) -> dict:
     videos = scenario["videos"] if scenario else search_youtube(f"{state['topic']} {state['current_skill_level']} tutorial", state["user_id"])
     if not videos:
         return {"needs_remap": True, "feedback_attempts": state.get("feedback_attempts", 0) + 1}
-    curated = [{**lesson, "video": videos[(int(lesson["day"]) - 1) % len(videos)]} for lesson in state["lessons"]]
+    curated = []
+    for position, lesson in enumerate(state["lessons"], start=1):
+        # Gemini occasionally formats this as "Day 1" rather than the requested
+        # integer. Accept either form and normalize the result for the UI.
+        day_number = normalize_lesson_day(lesson.get("day", position), position)
+        curated.append({**lesson, "day": day_number, "video": videos[(day_number - 1) % len(videos)]})
     return {"curated": curated, "needs_remap": False}
 
 
